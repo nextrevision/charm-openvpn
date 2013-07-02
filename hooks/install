@@ -1,0 +1,61 @@
+#!/bin/bash
+# Here do anything needed to install the service
+
+# Get user defined settings
+DOMAIN=`config-get domain`
+KEY_SIZE=`config-get key-size`
+KEY_COUNTRY=`config-get key-country`
+KEY_PROVINCE=`config-get key-province`
+KEY_CITY=`config-get key-city`
+KEY_ORG=`config-get key-org`
+
+[ -n "${DOMAIN}" ] || DOMAIN='localhost'
+
+juju-log "Importing common variables and functions"
+source hooks/common.sh
+
+juju-log "Installing OpenVPN package"
+apt-get install -qqy openvpn
+
+juju-log "Creating initial environment"
+mkdir $EASY_RSA
+cp -r /usr/share/doc/openvpn/examples/easy-rsa/2.0/* $EASY_RSA/
+ln -s $EASY_RSA/openssl-1.0.0.cnf $EASY_RSA/openssl.cnf
+
+juju-log "Setting environment variables"
+cp files/vars $EASY_RSA
+echo "export KEY_EMAIL=webmaster@${DOMAIN}" >> $EASY_RSA/vars
+echo "export KEY_SIZE=\"${KEY_SIZE}\"" >> $EASY_RSA/vars
+echo "export KEY_COUNTRY=\"${KEY_COUNTRY}\"" >> $EASY_RSA/vars
+echo "export KEY_PROVINCE=\"${KEY_PROVINCE}\"" >> $EASY_RSA/vars
+echo "export KEY_CITY=\"${KEY_CITY}\"" >> $EASY_RSA/vars
+echo "export KEY_ORG=\"${KEY_ORG}\"" >> $EASY_RSA/vars
+sed -r -i -e "s|export EASY_RSA=\"\"|export EASY_RSA=\"${EASY_RSA}\"|g" $EASY_RSA/vars
+cd $EASY_RSA
+source ./vars && ./clean-all
+cd -
+
+juju-log "Unpacking initial server configuration"
+cat /usr/share/doc/openvpn/examples/sample-config-files/server.conf.gz | gunzip - > ${SERVER_CONF}.example
+cp /usr/share/doc/openvpn/examples/sample-config-files/client.conf ${CLIENT_CONF}.example
+egrep -v '^#.*' ${SERVER_CONF}.example | egrep -v '^;.*' | egrep '^[a-z].*' > $SERVER_CONF
+egrep -v '^#.*' ${CLIENT_CONF}.example | egrep -v '^;.*' | egrep '^[a-z].*' > $CLIENT_CONF
+
+
+juju-log "Generating and installing server certificates"
+juju-log "Starting with CA"
+$PKITOOL --initca
+juju-log "Now to the server"
+$PKITOOL --server $DOMAIN
+juju-log "now to DH"
+$EASY_RSA/build-dh
+juju-log "generating TA key"
+openvpn --genkey --secret $EASY_RSA/keys/ta.key
+juju-log "copying keys over..."
+cp $EASY_RSA/keys/{$DOMAIN.crt,$DOMAIN.key,ta.key,ca.crt,dh1024.pem} /etc/openvpn/
+sed -i "s/cert server.crt/cert ${DOMAIN}.crt/g" $SERVER_CONF
+sed -i "s/key server.key/key ${DOMAIN}.key/g" $SERVER_CONF
+echo "tls-auth ta.key 0" >> $SERVER_CONF
+echo "tls-auth ta.key 1" >> $CLIENT_CONF
+
+juju-log "Install complete"
