@@ -1,16 +1,17 @@
 #!/bin/bash
 
+# Retrieve all client settings and get unit's public IP
 juju-log "Getting user defined settings"
 USER=`config-get user`
 PROTO=`config-get protocol`
 PORT=`config-get port`
 IFACE=`config-get interface`
-DEVICE=`config-get device-type`
 NETWORK=`config-get client-network`
 ADDITIONAL_ROUTES=`config-get additional-routes`
 RR_GW=`config-get reroute-gateway`
 RR_DNS=`config-get reroute-dns`
 DNS_SERVERS=`config-get dns-servers`
+PUBLIC_IP=`unit-get public-address`
 
 # Import shared functions and variables
 juju-log "Importing shared variables and functions"
@@ -18,53 +19,51 @@ source hooks/common.sh
 
 # Read the persistence file for previous user settings
 juju-log "Reading previous settings"
-if [ -f .persistence ]; then
-    source .persistence
+if [ -f $HOME/.persistence ]; then
+    source $HOME/.persistence
 fi
 
-# Assume the network iface is eth0 and parse the network settings
-juju-log "Getting current network information from eth0"
+# Get the current $IFACE network settings, parse into a "x.x.x.x x.x.x.x"
+# notation, and then do the same for the supplied client network.
+juju-log "Getting current network information from ${IFACE}"
 current_network=`ip route | grep ${IFACE} | egrep -o '^([0-9]+[./]){4}[0-9]{2}'`
 current_network=`parse_network ${current_network}`
-public_address=`unit-get public-address`
 juju-log "Parsing user supplied network"
 client_network=`parse_network ${NETWORK}`
 
-# Configure forwarding with iptables
+# Accept traffic from the tunnel interface and clear the NAT table
+# which will be rebuilt later on. The main goal is to only allow
+# NAT traffic for routes given to the client, and not client defined
+# routes added manually.
 iptables -A INPUT -i tun+ -j ACCEPT
 iptables -A FORWARD -i tun+ -j ACCEPT
 iptables -F -t nat
 
-# Ensure port settings | 1-65535
+# Ensure port settings are up to date | port from 1-65535
 juju-log "Updating port settings"
 sed -r -i -e "s/port [0-9]{1,5}.*/port ${PORT}/g" $SERVER_CONF
 
-# Ensure protocol settings | tcp/udp
+# Ensure protocol settings are up to dare for both server and client | tcp/udp
 juju-log "Updating protocol settings"
 sed -r -i -e "s/proto (tcp|udp).*/proto ${PROTO}/g" $SERVER_CONF
 sed -r -i -e "s/proto (tcp|udp).*/proto ${PROTO}/g" $CLIENT_CONF
 
-# Ensure device type settings | tun/tap
-juju-log "Updating device adapter settings"
-sed -r -i -e "s/dev (tap|tun).*/dev ${DEVICE}/g" $SERVER_CONF
-sed -r -i -e "s/dev (tap|tun).*/dev ${DEVICE}/g" $CLIENT_CONF
-
-# Update client config settings
-sed -r -i -e "s/^remote.*/remote ${public_address} ${PORT}/g" $CLIENT_CONF
-sed -r -i "s/cert .*\.crt/cert ${USER}.crt/g" $CLIENT_CONF
-sed -r -i "s/key .*\.key/key ${USER}.key/g" $CLIENT_CONF
-
-# Ensure client network settings | server x.x.x.x x.x.x.x
+# Ensure client network settings are up to date | server x.x.x.x x.x.x.x
 juju-log "Updating client network settings"
 sed -r -i -e "s/server ([0-9]{1,3}\.){3}.*/server ${client_network}/g" $SERVER_CONF
 
-# Remove any active routes
+# Update the client config settings to include public IP and user certificates
+sed -r -i -e "s/^remote.*/remote ${PUBLIC_IP} ${PORT}/g" $CLIENT_CONF
+sed -r -i -e "s/cert .*\.crt/cert ${USER}.crt/g" $CLIENT_CONF
+sed -r -i -e "s/key .*\.key/key ${USER}.key/g" $CLIENT_CONF
+
+# Remove any prior active routes
 juju-log "Removing old routes"
 sed -r -i -e '/push \"route ([0-9]{1,3}\.){3}.*\"/d' $SERVER_CONF
-# Add current network route
+# Route traffic destined to the $IFACE network via the VPN tunnel
 juju-log "Adding current network route"
 echo "push \"route ${current_network}\"" >> $SERVER_CONF
-# Add additional routes
+# Add user supplied additional routes
 juju-log "Adding additional, client specified routes"
 if [ -n "${ADDITIONAL_ROUTES}" ]; then
 	for add_net in ${ADDITIONAL_ROUTES//,/ }; do
@@ -75,19 +74,22 @@ if [ -n "${ADDITIONAL_ROUTES}" ]; then
 	done
 fi
 
-# Remove any prior GW redirect settings
+# Remove any prior GW redirect settings and add it back if defined
+# Configure NAT to accept all traffic from the client network and
+# forward out the VPN interface.
 juju-log "Removing redirected gateway settings"
 sed -r -i -e '/push \"redirect-gateway.*\"/d' $SERVER_CONF
-if [[ $RR_GW == "true" ]]; then
-    # Add redirect gateway setting
+if [[ $RR_GW == "True" ]]; then
     juju-log "Adding redirect gateway setting"
     echo "push \"redirect-gateway def1 bypass-dhcp\"" >> $SERVER_CONF
     iptables -t nat -A POSTROUTING -s ${NETWORK} -o ${IFACE} -j MASQUERADE
 fi
 
-# Remove any prior DNS settings
+# Remove any prior DNS settings and add them back if defined
+# Configure NAT to accept and forward traffic destined to the DNS
+# servers and add the route to the server config.
 sed -r -i -e '/push \"dhcp-option DNS.*\"/d' $SERVER_CONF
-if [[ $RR_DNS == "true" || $RR_GW == "true" ]]; then
+if [[ $RR_DNS == "True" || $RR_GW == "True" ]]; then
     # Add DNS dhcp option setting and route DNS servers over VPN
     juju-log "Adding DNS DHCP option"
     for dns_server in ${DNS_SERVERS//,/ }; do
@@ -98,38 +100,43 @@ if [[ $RR_DNS == "true" || $RR_GW == "true" ]]; then
     done
 fi
 
-# If the user changed, generate a user cert file
+# Check to see if a user certificate has been generated. If one
+# has not, then go ahead and create one. Next, create a directory
+# for the user and copy the user and server certs/keys as well as
+# the client config. Create a nice little tarball and place it in
+# the ubuntu user's home directory for download via SCP and remove
+# the temp directory.
 juju-log "Creating user certificate"
 if ! `ls $EASY_RSA/keys/ | grep -q ${USER}`; then
     juju-log "Generating new certificate for user ${USER}"
     cd $EASY_RSA && source ./vars
     $PKITOOL $USER
-    cd -
+    mkdir ${USER}_keys
+	cp $CLIENT_CONF keys/ca.crt keys/$USER.crt \
+	    keys/$USER.key keys/ta.key ${USER}_keys/
+	tar -czf /home/ubuntu/$USER.tgz ${USER}_keys
+	rm -Rf ${USER}_keys
+	juju-log "User settings ready for download"
 fi
-cd $EASY_RSA && mkdir ${USER}_keys
-cp $CLIENT_CONF keys/ca.crt keys/$USER.crt \
-    keys/$USER.key keys/ta.key ${USER}_keys/
-tar -czf /home/ubuntu/$USER.tgz ${USER}_keys
-rm -Rf ${USER}_keys
-cd -
-juju-log "User certificate file ready for download"
 
-# Restart the services
+# Restart OpenVPN services
 juju-log "Restarting the OpenVPN service"
-hooks/stop
-hooks/start
+$HOME/stop
+$HOME/start
 
-# Opening up ports
+# If the port or protocol has changed, then close the prior port
+# and allow the new port to receive traffic.
 if [[ $P_PORT != $PORT || $P_PROTO != $PROTO ]]; then
   juju-log "Closing port ${P_PORT}/${P_PROTO} and opening port ${PORT}/${PROTO}"
-  [ -z "${P_PORT}" ] || [ -z  "${P_PROTO}" ] || close-port $P_PORT/$P_PROTO
-  open-port $PORT/$PROTO
+  [ -z "${P_PORT}" ] || [ -z  "${P_PROTO}" ] || close-port ${P_PORT}/${P_PROTO}
+  open-port ${PORT}/${PROTO}
 fi
 
-# Write persistence file
+# Write a persistence file so we can compare changes
 juju-log "Writing the persistence file"
-echo "P_PORT=${PORT}" > .persistence
-echo "P_PROTO=${PROTO}" >> .persistence
-echo "P_NETWORK=${PROTO}" >> .persistence
+echo "P_PORT=${PORT}" > $HOME/.persistence
+echo "P_PROTO=${PROTO}" >> $HOME/.persistence
+echo "P_NETWORK=${NETWORK}" >> $HOME/.persistence
 
+# Great work, go take a break.
 juju-log "Finished applying changes"

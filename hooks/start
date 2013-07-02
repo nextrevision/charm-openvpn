@@ -3,4 +3,4 @@
 # Note that currently this is run directly after install
 # i.e. 'service apache2 start'
 
-service openvpn start
+service openvpn start || :

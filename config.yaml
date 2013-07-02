@@ -34,17 +34,13 @@ options:
     type: string
     default: "5.5.0.0/20"
     description: network to use for client addressing; must include a cidr suffix, i.e. X.X.X.X/XX
-  device-type:
-    type: string
-    default: "tun"
-    description: specify which type of VPN device to use for VPN traffic (tun|tap)
   additional-routes:
     type: string
     description: additional routes to be routed through the VPN (i.e. '1.1.1.0/23, 2.2.2.0/8')
   key-size:
     type: int
     default: 1024
-    description: size of the RSA key
+    description: size of the RSA key (typically 1024 or 2048)
   key-country:
     type: string
     default: "US"

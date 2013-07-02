@@ -1,14 +1,17 @@
 #!/bin/bash
+
 # Set static variables
+HOME=`dirname $0`
 EASY_RSA=/etc/openvpn/easy-rsa
 PKITOOL=$EASY_RSA/pkitool
 SERVER_CONF=/etc/openvpn/server.conf
-CLIENT_CONF=/etc/openvpn/client.conf
+CLIENT_CONF=/etc/openvpn/client.ovpn
 
-# Convert a CIDR notation to netmask
+# Convert a CIDR notation to netmask for use with the route command.
+# Essentially, this will take a CIDR value (/1-32) and return a
+# subnet mask (e.x. 255.255.255.0).
 # Adapted from:
 #   https://www.linuxquestions.org/questions/programming-9/bash-cidr-calculator-646701/#post3433298
-#
 function convert_cidr {
   local i netmask=""
   local cidr=$1
@@ -26,6 +29,8 @@ function convert_cidr {
   echo $netmask
 }
 
+# Parses a network given in the "x.x.x.x/xx" notation and returns a
+# "x.x.x.x x.x.x.x" network and subnet mask notation.
 function parse_network {
   local full_net=$1
   local network=`echo ${full_net} | cut -d'/' -f1`
