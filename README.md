@@ -28,7 +28,8 @@ certificates, and config generated during installation in order to connect.
 The charm creates a tarball with this information whenever a new user is
 added and places it in the home directory of the default user. In order to
 download the tarball, you must know the machine number the unit is running on
-and the name of the user set by Juju (default: "admin"). Below is an example
+and the name of the user set by Juju (default: "admin"). You can find the
+machine number by viewing the output from 'juju status'. Below is an example
 of downloading the config for the default user, "admin", from machine "1":
 
     juju scp 1:~/admin.tgz .
@@ -114,7 +115,7 @@ Additional routes can be specified in a comma separated list to instruct the
 VPN to route the given networks. This can be helpful when wanting to route only
 specific traffic through the VPN. By default, no additional routes are given.
 
-    juju set openvpn additional-networks="1.1.1.0/24, 2.2.2.0/8"
+    juju set openvpn additional-routes="1.1.1.0/24, 2.2.2.0/8"
 
 ### Reroute Gateway
 
