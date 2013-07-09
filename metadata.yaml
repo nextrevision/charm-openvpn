@@ -1,5 +1,5 @@
 name: openvpn
-summary: virtual private network daemon
+summary: OpenVPN Server
 maintainer: NextRevision <notarobot@nextrevision.net>
 description: |
   OpenVPN is an application to securely tunnel IP networks over a single
