@@ -8,6 +8,14 @@ wide range of configurations, including remote access, site-to-site VPNs,
 Wi-Fi security, and enterprise-scale remote access solutions with load
 balancing, failover, and fine-grained access-controls.
 
+This charm installs the VPN service and assists in generating user certificates
+for connecting to the VPN. Certain configuration settings have been built into
+the charm in the form of variables that can be set pre or post installation.
+Variables configured pre-installation can be found in the
+"Advanced Installation Configuration Settings" section and variables that can
+be changed at any point during the charm lifecycle can be found in the
+"Common Configuration Settings" section located in this README.
+
 # Usage
 
 To deploy the charm, you will first need a bootstrapped Juju environment and,
@@ -162,6 +170,15 @@ A charm can then be deployed with these options using the following:
 
     juju deploy --config openvpn.yaml openvpn
 
+Note: If a configuration setting listed below needs to be changed, the only way
+to do so is to destroy the charm and redeploy. This, however, will nullify any
+user certificates previously generated.
+
+### Domain
+
+Specify a domain to use for certificate signing and generation.
+
+    domain: mydomain.tld
 
 ### Key Size
 

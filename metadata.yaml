@@ -13,6 +13,3 @@ description: |
   firewalls (such as Linux's iptables).
 categories:
   - application
-provides:
-  vpn-server:
-    interface: vpn
